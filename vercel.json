@@ -1,14 +1,15 @@
 {
     "version": 2,
-    "functions": {
-        "GSC/main.py": {
-            "runtime": "vercel-python@3.12"
+    "builds": [
+        {
+            "src": "main.py",
+            "use": "@vercel/python"
         }
-    },
+    ],
     "routes": [
         {
             "src": "/(.*)",
-            "dest": "GSC/main.py"
+            "dest": "/main.py"
         }
     ]
 }
