@@ -185,4 +185,59 @@ def get_verification_result(
         "permission_level": record.permission_level
     }
 
-    
+####################################################
+
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GSC_QUERY_URL = "https://www.googleapis.com/webmasters/v3/sites/{site_url}/searchAnalytics/query"
+
+def get_access_token(refresh_token: str):
+    data = {
+        "client_id": CLIENT_ID,
+        "client_secret": CLIENT_SECRET,
+        "refresh_token": refresh_token,
+        "grant_type": "refresh_token"
+    }
+
+    resp = requests.post(GOOGLE_TOKEN_URL, data=data)
+    if resp.status_code != 200:
+        raise HTTPException(status_code=400, detail="Failed to refresh access token")
+
+    return resp.json()["access_token"]
+
+
+@gsc_router.get("/metrics")
+def get_gsc_metrics(
+    site_url: str = Query(...),
+    start_date: str = Query(..., example="2026-01-01"),
+    end_date: str = Query(..., example="2026-02-01"),
+    db: Session = Depends(get_db)
+):
+    record = db.query(GSCVerification).filter(
+        GSCVerification.site_url == site_url,
+        GSCVerification.verified == True
+    ).first()
+
+    if not record:
+        raise HTTPException(status_code=404, detail="Verified site not found")
+
+    access_token = get_access_token(record.refresh_token)
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+
+    body = {
+        "startDate": start_date,
+        "endDate": end_date,
+        "dimensions": ["query"],
+        "rowLimit": 50
+    }
+
+    url = GSC_QUERY_URL.format(site_url=site_url)
+    resp = requests.post(url, headers=headers, json=body)
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=400, detail=resp.text)
+
+    return resp.json()
