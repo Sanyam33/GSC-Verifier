@@ -10,6 +10,6 @@ app = FastAPI()
 app.include_router(router.gsc_router)
 
 @app.get("/")
-def hello():
-    return {"Hello": "World"}
+async def root():
+    return {"message": "Welcome to the GSC API"}
 
