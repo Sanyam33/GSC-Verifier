@@ -170,9 +170,12 @@ def get_verification_result(
     site_url: str = Query(...),
     db: Session = Depends(get_db)
 ):
+
+    clean_site = normalize_site(site_url)
+    
     record = (
         db.query(GSCVerification)
-        .filter(GSCVerification.site_url == site_url)
+        .filter(GSCVerification.site_url == clean_site)
         .order_by(GSCVerification.created_at.desc())
         .first()
     )
