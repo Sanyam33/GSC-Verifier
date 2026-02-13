@@ -17,10 +17,10 @@ def root():
 def help():
     return{
         "endpoints": {
-            "request-verification": "POST /api/gsc/request-verification",
-            "callback": "GET /api/gsc/callback",
-            "verify-result": "GET /api/gsc/verify-result",
-            "metrics": "GET /api/gsc/metrics"
+            "request-verification": "POST /api/v1/gsc/request-verification",
+            "callback": "GET /api/v1/gsc/callback",
+            "verify-result": "GET /api/v1/gsc/verify-result",
+            "metrics": "GET /api/v1/gsc/metrics"
         },
         "example_payload": {
             "site_url": "https://example.com"
