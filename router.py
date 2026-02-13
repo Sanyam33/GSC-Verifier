@@ -144,6 +144,7 @@ def gsc_callback(request: Request, db: Session = Depends(get_db)):
             permission_level = site["permissionLevel"]
             if permission_level in ["siteOwner", "siteFullUser"]:
                 verified = True
+                record.site_url = site["siteUrl"]
             break
 
     # 6. Update DB
@@ -243,10 +244,10 @@ def get_gsc_metrics(
         "rowLimit": 50
     }
 
-    google_site = f"sc-domain:{record.site_url}"
-    encoded_site = quote(google_site, safe="")
+    # google_site = f"sc-domain:{record.site_url}"
+    # encoded_site = quote(google_site, safe="")    
 
-    # encoded_site = quote(record.site_url, safe="")
+    encoded_site = quote(record.site_url, safe="")
     url = GSC_QUERY_URL.format(site_url=encoded_site)
 
     resp = requests.post(url, headers=headers, json=body)
