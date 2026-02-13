@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, Request, Query, HTTPException
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
-from urllib.parse import urlencode
+from urllib.parse import urlencode, quote
 from sqlalchemy import text
 from models import GSCVerification
 from schemas import GSCVerificationCreate, GSCVerificationResult
@@ -48,9 +48,10 @@ def request_gsc_verification(
     """))
     db.commit()
 
+    clean_site = normalize_site(str(data.site_url))
     # create DB record
     record = GSCVerification(
-        site_url=str(data.site_url),
+        site_url=clean_site,
         verified=False
     )
     db.add(record)
@@ -205,6 +206,7 @@ def get_access_token(refresh_token: str):
     return resp.json()["access_token"]
 
 
+
 @gsc_router.get("/metrics")
 def get_gsc_metrics(
     site_url: str = Query(...),
@@ -212,6 +214,10 @@ def get_gsc_metrics(
     end_date: str = Query(..., example="2026-02-01"),
     db: Session = Depends(get_db)
 ):
+
+    # normalize incoming site
+    site_url = normalize_site(site_url)
+
     record = db.query(GSCVerification).filter(
         GSCVerification.site_url == site_url,
         GSCVerification.verified == True
@@ -234,8 +240,11 @@ def get_gsc_metrics(
         "rowLimit": 50
     }
 
-    url = GSC_QUERY_URL.format(site_url=site_url)
+    encoded_site = quote(record.site_url, safe="")
+    url = GSC_QUERY_URL.format(site_url=encoded_site)
+
     resp = requests.post(url, headers=headers, json=body)
+
 
     if resp.status_code != 200:
         raise HTTPException(status_code=400, detail=resp.text)
