@@ -49,6 +49,7 @@ def request_gsc_verification(
     db.commit()
 
     clean_site = normalize_site(str(data.site_url))
+    # clean_site = str(data.site_url)
     # create DB record
     record = GSCVerification(
         site_url=clean_site,
@@ -220,12 +221,22 @@ def get_gsc_metrics(
 ):
 
     # normalize incoming site
-    site_url = normalize_site(site_url)
+    # site_url = normalize_site(site_url)
 
     record = db.query(GSCVerification).filter(
         GSCVerification.site_url == site_url,
         GSCVerification.verified == True
     ).first()
+
+
+    if not record:
+        # Fallback: try searching normalized if the exact match fails
+        # (Useful for transition periods)
+        clean = normalize_site(site_url)
+        record = db.query(GSCVerification).filter(
+            GSCVerification.site_url.contains(clean),
+            GSCVerification.verified == True
+        ).first()
 
     if not record:
         raise HTTPException(status_code=404, detail="Verified site not found")
