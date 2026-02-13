@@ -8,6 +8,7 @@ from sqlalchemy import text
 from models import GSCVerification
 from schemas import GSCVerificationCreate, GSCVerificationResult
 from db import get_db
+from typing import List, Optional
 
 load_dotenv()
 gsc_router = APIRouter(prefix="/api/v1/gsc", tags=["GSC"])
@@ -212,26 +213,83 @@ def get_access_token(refresh_token: str):
 
 
 
+# @gsc_router.get("/metrics")
+# def get_gsc_metrics(
+#     site_url: str = Query(...),
+#     start_date: str = Query(..., example="2026-01-01"),
+#     end_date: str = Query(..., example="2026-02-01"),
+#     db: Session = Depends(get_db)
+# ):
+
+#     # normalize incoming site
+#     # site_url = normalize_site(site_url)
+
+#     record = db.query(GSCVerification).filter(
+#         GSCVerification.site_url == site_url,
+#         GSCVerification.verified == True
+#     ).first()
+
+
+#     if not record:
+#         # Fallback: try searching normalized if the exact match fails
+#         # (Useful for transition periods)
+#         clean = normalize_site(site_url)
+#         record = db.query(GSCVerification).filter(
+#             GSCVerification.site_url.contains(clean),
+#             GSCVerification.verified == True
+#         ).first()
+
+#     if not record:
+#         raise HTTPException(status_code=404, detail="Verified site not found")
+
+#     access_token = get_access_token(record.refresh_token)
+
+#     headers = {
+#         "Authorization": f"Bearer {access_token}",
+#         "Content-Type": "application/json"
+#     }
+
+#     body = {
+#         "startDate": start_date,
+#         "endDate": end_date,
+#         "dimensions": ["query"],
+#         "rowLimit": 50
+#     }
+
+#     # google_site = f"sc-domain:{record.site_url}"
+#     # encoded_site = quote(google_site, safe="")    
+
+#     encoded_site = quote(record.site_url, safe="")
+#     url = GSC_QUERY_URL.format(site_url=encoded_site)
+
+#     resp = requests.post(url, headers=headers, json=body)
+
+
+#     if resp.status_code != 200:
+#         raise HTTPException(status_code=400, detail=resp.text)
+
+#     return resp.json()
+
+
+
 @gsc_router.get("/metrics")
 def get_gsc_metrics(
     site_url: str = Query(...),
     start_date: str = Query(..., example="2026-01-01"),
     end_date: str = Query(..., example="2026-02-01"),
+    # New Dynamic Parameters
+    dimensions: List[str] = Query(["query"], description="e.g. query, page, country, device, date"),
+    search_type: str = Query("web", description="web, image, video, news, discover, googleNews"),
+    row_limit: int = Query(50, ge=1, le=25000),
     db: Session = Depends(get_db)
 ):
-
-    # normalize incoming site
-    # site_url = normalize_site(site_url)
-
+    # 1. Database Lookup (keeping your robust search logic)
     record = db.query(GSCVerification).filter(
         GSCVerification.site_url == site_url,
         GSCVerification.verified == True
     ).first()
 
-
     if not record:
-        # Fallback: try searching normalized if the exact match fails
-        # (Useful for transition periods)
         clean = normalize_site(site_url)
         record = db.query(GSCVerification).filter(
             GSCVerification.site_url.contains(clean),
@@ -241,28 +299,33 @@ def get_gsc_metrics(
     if not record:
         raise HTTPException(status_code=404, detail="Verified site not found")
 
+    # 2. Token Refresh
     access_token = get_access_token(record.refresh_token)
 
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
-    }
+    # 3. Dynamic Body Construction & Validation
+    # Important: Discover and GoogleNews do not support the 'query' dimension
+    final_dimensions = dimensions
+    if search_type in ["discover", "googleNews"] and "query" in final_dimensions:
+        final_dimensions = [d for d in final_dimensions if d != "query"]
 
     body = {
         "startDate": start_date,
         "endDate": end_date,
-        "dimensions": ["query"],
-        "rowLimit": 50
+        "dimensions": final_dimensions,
+        "type": search_type,  # This handles web, image, video, etc.
+        "rowLimit": row_limit
     }
 
-    # google_site = f"sc-domain:{record.site_url}"
-    # encoded_site = quote(google_site, safe="")    
-
+    # 4. GSC API Call
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+    
     encoded_site = quote(record.site_url, safe="")
     url = GSC_QUERY_URL.format(site_url=encoded_site)
 
     resp = requests.post(url, headers=headers, json=body)
-
 
     if resp.status_code != 200:
         raise HTTPException(status_code=400, detail=resp.text)
