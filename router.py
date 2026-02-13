@@ -172,7 +172,7 @@ def get_verification_result(
 ):
 
     clean_site = normalize_site(site_url)
-    
+
     record = (
         db.query(GSCVerification)
         .filter(GSCVerification.site_url == clean_site)
@@ -243,7 +243,10 @@ def get_gsc_metrics(
         "rowLimit": 50
     }
 
-    encoded_site = quote(record.site_url, safe="")
+    google_site = f"sc-domain:{record.site_url}"
+    encoded_site = quote(google_site, safe="")
+
+    # encoded_site = quote(record.site_url, safe="")
     url = GSC_QUERY_URL.format(site_url=encoded_site)
 
     resp = requests.post(url, headers=headers, json=body)
