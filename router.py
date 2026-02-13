@@ -10,7 +10,7 @@ from schemas import GSCVerificationCreate, GSCVerificationResult
 from db import get_db
 
 load_dotenv()
-gsc_router = APIRouter(prefix="/api/gsc", tags=["GSC"])
+gsc_router = APIRouter(prefix="/api/v1/gsc", tags=["GSC"])
 
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 GSC_SITES_URL = "https://www.googleapis.com/webmasters/v3/sites"
