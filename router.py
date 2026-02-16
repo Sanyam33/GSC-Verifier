@@ -321,82 +321,18 @@ async def get_access_token(refresh_token: str):
 
 
 
-# @gsc_router.get("/metrics")
-# def get_gsc_metrics(
-#     site_url: str = Query(...),
-#     start_date: str = Query(..., example="2026-01-01"),
-#     end_date: str = Query(..., example="2026-02-01"),
-#     # New Dynamic Parameters
-#     dimensions: List[str] = Query(["query"], description="e.g. query, page, country, device, date"),
-#     search_type: str = Query("web", description="web, image, video, news, discover, googleNews"),
-#     row_limit: int = Query(50, ge=1, le=25000),
-#     db: Session = Depends(get_db)
-# ):
-#     # 1. Database Lookup (keeping your robust search logic)
-#     record = db.query(GSCVerification).filter(
-#         GSCVerification.site_url == site_url,
-#         GSCVerification.verified == True
-#     ).first()
-
-#     if not record:
-#         clean = normalize_site(site_url)
-#         record = db.query(GSCVerification).filter(
-#             GSCVerification.site_url.contains(clean),
-#             GSCVerification.verified == True
-#         ).first()
-
-#     if not record:
-#         raise HTTPException(status_code=404, detail="Verified site not found")
-
-#     # 2. Token Refresh
-#     access_token = get_access_token(record.refresh_token)
-
-#     # 3. Dynamic Body Construction & Validation
-#     # Important: Discover and GoogleNews do not support the 'query' dimension
-#     final_dimensions = dimensions
-#     if search_type in ["discover", "googleNews"] and "query" in final_dimensions:
-#         final_dimensions = [d for d in final_dimensions if d != "query"]
-
-#     body = {
-#         "startDate": start_date,
-#         "endDate": end_date,
-#         "dimensions": final_dimensions,
-#         "type": search_type,  # This handles web, image, video, etc.
-#         "rowLimit": row_limit
-#     }
-
-#     # 4. GSC API Call
-#     headers = {
-#         "Authorization": f"Bearer {access_token}",
-#         "Content-Type": "application/json"
-#     }
-    
-#     encoded_site = quote(record.site_url, safe="")
-#     url = GSC_QUERY_URL.format(site_url=encoded_site)
-
-#     resp = requests.post(url, headers=headers, json=body)
-
-#     if resp.status_code != 200:
-#         raise HTTPException(status_code=400, detail=resp.text)
-
-#     return resp.json()
-
-
 @gsc_router.get("/metrics")
-async def get_gsc_metrics(
+def get_gsc_metrics(
     site_url: str = Query(...),
     start_date: str = Query(..., example="2026-01-01"),
     end_date: str = Query(..., example="2026-02-01"),
-    dimensions: List[str] = Query(["query"]),
-    search_type: str = Query("web"),
+    # New Dynamic Parameters
+    dimensions: List[str] = Query(["query"], description="e.g. query, page, country, device, date"),
+    search_type: str = Query("web", description="web, image, video, news, discover, googleNews"),
     row_limit: int = Query(50, ge=1, le=25000),
     db: Session = Depends(get_db)
 ):
-    # ------------------ Validation ------------------
-    if start_date > end_date:
-        raise HTTPException(status_code=400, detail="start_date must be before end_date")
-
-    # ------------------ DB Lookup -------------------
+    # 1. Database Lookup (keeping your robust search logic)
     record = db.query(GSCVerification).filter(
         GSCVerification.site_url == site_url,
         GSCVerification.verified == True
@@ -405,17 +341,18 @@ async def get_gsc_metrics(
     if not record:
         clean = normalize_site(site_url)
         record = db.query(GSCVerification).filter(
-            GSCVerification.site_url == clean,
+            GSCVerification.site_url.contains(clean),
             GSCVerification.verified == True
-        ).order_by(GSCVerification.created_at.desc()).first()
+        ).first()
 
     if not record:
         raise HTTPException(status_code=404, detail="Verified site not found")
 
-    # ------------------ Token -----------------------
-    access_token = await get_access_token(record.refresh_token)
+    # 2. Token Refresh
+    access_token = get_access_token(record.refresh_token)
 
-    # ------------------ Dimension Fix ----------------
+    # 3. Dynamic Body Construction & Validation
+    # Important: Discover and GoogleNews do not support the 'query' dimension
     final_dimensions = dimensions
     if search_type in ["discover", "googleNews"] and "query" in final_dimensions:
         final_dimensions = [d for d in final_dimensions if d != "query"]
@@ -424,35 +361,98 @@ async def get_gsc_metrics(
         "startDate": start_date,
         "endDate": end_date,
         "dimensions": final_dimensions,
-        "type": search_type,
+        "type": search_type,  # This handles web, image, video, etc.
         "rowLimit": row_limit
     }
 
+    # 4. GSC API Call
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json"
     }
-
+    
     encoded_site = quote(record.site_url, safe="")
     url = GSC_QUERY_URL.format(site_url=encoded_site)
 
-    # ------------------ API Call --------------------
-    async with httpx.AsyncClient(timeout=20) as client:
-        resp = await client.post(url, headers=headers, json=body)
+    resp = requests.post(url, headers=headers, json=body)
 
     if resp.status_code != 200:
-        try:
-            google_error = resp.json()
-        except:
-            google_error = resp.text
-
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "source": "google_search_console",
-                "message": "Failed to fetch metrics",
-                "google_error": google_error
-            }
-        )
+        raise HTTPException(status_code=400, detail=resp.text)
 
     return resp.json()
+
+
+# @gsc_router.get("/metrics")
+# async def get_gsc_metrics(
+#     site_url: str = Query(...),
+#     start_date: str = Query(..., example="2026-01-01"),
+#     end_date: str = Query(..., example="2026-02-01"),
+#     dimensions: List[str] = Query(["query"]),
+#     search_type: str = Query("web"),
+#     row_limit: int = Query(50, ge=1, le=25000),
+#     db: Session = Depends(get_db)
+# ):
+#     # ------------------ Validation ------------------
+#     if start_date > end_date:
+#         raise HTTPException(status_code=400, detail="start_date must be before end_date")
+
+#     # ------------------ DB Lookup -------------------
+#     record = db.query(GSCVerification).filter(
+#         GSCVerification.site_url == site_url,
+#         GSCVerification.verified == True
+#     ).first()
+
+#     if not record:
+#         clean = normalize_site(site_url)
+#         record = db.query(GSCVerification).filter(
+#             GSCVerification.site_url == clean,
+#             GSCVerification.verified == True
+#         ).order_by(GSCVerification.created_at.desc()).first()
+
+#     if not record:
+#         raise HTTPException(status_code=404, detail="Verified site not found")
+
+#     # ------------------ Token -----------------------
+#     access_token = await get_access_token(record.refresh_token)
+
+#     # ------------------ Dimension Fix ----------------
+#     final_dimensions = dimensions
+#     if search_type in ["discover", "googleNews"] and "query" in final_dimensions:
+#         final_dimensions = [d for d in final_dimensions if d != "query"]
+
+#     body = {
+#         "startDate": start_date,
+#         "endDate": end_date,
+#         "dimensions": final_dimensions,
+#         "type": search_type,
+#         "rowLimit": row_limit
+#     }
+
+#     headers = {
+#         "Authorization": f"Bearer {access_token}",
+#         "Content-Type": "application/json"
+#     }
+
+#     encoded_site = quote(record.site_url, safe="")
+#     url = GSC_QUERY_URL.format(site_url=encoded_site)
+
+#     # ------------------ API Call --------------------
+#     async with httpx.AsyncClient(timeout=20) as client:
+#         resp = await client.post(url, headers=headers, json=body)
+
+#     if resp.status_code != 200:
+#         try:
+#             google_error = resp.json()
+#         except:
+#             google_error = resp.text
+
+#         raise HTTPException(
+#             status_code=502,
+#             detail={
+#                 "source": "google_search_console",
+#                 "message": "Failed to fetch metrics",
+#                 "google_error": google_error
+#             }
+#         )
+
+#     return resp.json()
