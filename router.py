@@ -342,6 +342,7 @@ async def gsc_callback(request: Request, db: Session = Depends(get_db)):
 #         "permission_level": record.permission_level
 #     }
 
+@gsc_router.get("/verify-result", response_model=GSCVerificationResult)
 def get_verification_result(
     site_url: str = Query(..., description="The URL to check verification status for"),
     db: Session = Depends(get_db)
