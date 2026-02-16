@@ -1,6 +1,6 @@
 import os, requests, httpx
 from dotenv import load_dotenv
-from fastapi import APIRouter, Depends, Request, Query, HTTPException
+from fastapi import APIRouter, Depends, Request, Query, HTTPException, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 from urllib.parse import urlencode, quote
@@ -212,23 +212,6 @@ GSC_QUERY_URL = "https://www.googleapis.com/webmasters/v3/sites/{site_url}/searc
 #     return resp.json()["access_token"]
 
 
-async def get_access_token(refresh_token: str):
-    data = {
-        "client_id": CLIENT_ID,
-        "client_secret": CLIENT_SECRET,
-        "refresh_token": refresh_token,
-        "grant_type": "refresh_token"
-    }
-
-    async with httpx.AsyncClient(timeout=10) as client:
-        resp = await client.post(GOOGLE_TOKEN_URL, data=data)
-
-    if resp.status_code != 200:
-        raise HTTPException(status_code=502, detail="Google token service failed")
-
-    return resp.json()["access_token"]
-
-
 
 
 
@@ -237,21 +220,19 @@ async def get_access_token(refresh_token: str):
 #     site_url: str = Query(...),
 #     start_date: str = Query(..., example="2026-01-01"),
 #     end_date: str = Query(..., example="2026-02-01"),
+#     # New Dynamic Parameters
+#     dimensions: List[str] = Query(["query"], description="e.g. query, page, country, device, date"),
+#     search_type: str = Query("web", description="web, image, video, news, discover, googleNews"),
+#     row_limit: int = Query(50, ge=1, le=25000),
 #     db: Session = Depends(get_db)
 # ):
-
-#     # normalize incoming site
-#     # site_url = normalize_site(site_url)
-
+#     # 1. Database Lookup (keeping your robust search logic)
 #     record = db.query(GSCVerification).filter(
 #         GSCVerification.site_url == site_url,
 #         GSCVerification.verified == True
 #     ).first()
 
-
 #     if not record:
-#         # Fallback: try searching normalized if the exact match fails
-#         # (Useful for transition periods)
 #         clean = normalize_site(site_url)
 #         record = db.query(GSCVerification).filter(
 #             GSCVerification.site_url.contains(clean),
@@ -261,28 +242,33 @@ async def get_access_token(refresh_token: str):
 #     if not record:
 #         raise HTTPException(status_code=404, detail="Verified site not found")
 
+#     # 2. Token Refresh
 #     access_token = get_access_token(record.refresh_token)
 
-#     headers = {
-#         "Authorization": f"Bearer {access_token}",
-#         "Content-Type": "application/json"
-#     }
+#     # 3. Dynamic Body Construction & Validation
+#     # Important: Discover and GoogleNews do not support the 'query' dimension
+#     final_dimensions = dimensions
+#     if search_type in ["discover", "googleNews"] and "query" in final_dimensions:
+#         final_dimensions = [d for d in final_dimensions if d != "query"]
 
 #     body = {
 #         "startDate": start_date,
 #         "endDate": end_date,
-#         "dimensions": ["query"],
-#         "rowLimit": 50
+#         "dimensions": final_dimensions,
+#         "type": search_type,  # This handles web, image, video, etc.
+#         "rowLimit": row_limit
 #     }
 
-#     # google_site = f"sc-domain:{record.site_url}"
-#     # encoded_site = quote(google_site, safe="")    
-
+#     # 4. GSC API Call
+#     headers = {
+#         "Authorization": f"Bearer {access_token}",
+#         "Content-Type": "application/json"
+#     }
+    
 #     encoded_site = quote(record.site_url, safe="")
 #     url = GSC_QUERY_URL.format(site_url=encoded_site)
 
 #     resp = requests.post(url, headers=headers, json=body)
-
 
 #     if resp.status_code != 200:
 #         raise HTTPException(status_code=400, detail=resp.text)
@@ -290,19 +276,40 @@ async def get_access_token(refresh_token: str):
 #     return resp.json()
 
 
+TIMEOUT = httpx.Timeout(10.0, connect=5.0)
+
+async def get_access_token(refresh_token: str):
+    """Refreshes the Google OAuth token asynchronously."""
+    data = {
+        "client_id": CLIENT_ID,
+        "client_secret": CLIENT_SECRET,
+        "refresh_token": refresh_token,
+        "grant_type": "refresh_token"
+    }
+
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        try:
+            resp = await client.post(GOOGLE_TOKEN_URL, data=data)
+            resp.raise_for_status() # Automatically raises exception for 4xx/5xx
+            return resp.json()["access_token"]
+        except httpx.HTTPStatusError as e:
+            # Handle specific Google Auth errors
+            error_detail = e.response.json().get("error_description", "Token refresh failed")
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=error_detail)
+        except httpx.RequestError:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Google Auth service unreachable")
 
 @gsc_router.get("/metrics")
-def get_gsc_metrics(
+async def get_gsc_metrics(
     site_url: str = Query(...),
     start_date: str = Query(..., example="2026-01-01"),
     end_date: str = Query(..., example="2026-02-01"),
-    # New Dynamic Parameters
-    dimensions: List[str] = Query(["query"], description="e.g. query, page, country, device, date"),
-    search_type: str = Query("web", description="web, image, video, news, discover, googleNews"),
+    dimensions: List[str] = Query(["query"]),
+    search_type: str = Query("web"),
     row_limit: int = Query(50, ge=1, le=25000),
     db: Session = Depends(get_db)
 ):
-    # 1. Database Lookup (keeping your robust search logic)
+    # 1. Database Lookup (Remains synchronous as SQLAlchemy/Postgres drivers usually are)
     record = db.query(GSCVerification).filter(
         GSCVerification.site_url == site_url,
         GSCVerification.verified == True
@@ -316,39 +323,39 @@ def get_gsc_metrics(
         ).first()
 
     if not record:
-        raise HTTPException(status_code=404, detail="Verified site not found")
+        raise HTTPException(status_code=404, detail="Site not verified or record not found")
 
-    # 2. Token Refresh
-    access_token = get_access_token(record.refresh_token)
+    # 2. Asynchronous Token Refresh
+    access_token = await get_access_token(record.refresh_token)
 
-    # 3. Dynamic Body Construction & Validation
-    # Important: Discover and GoogleNews do not support the 'query' dimension
-    final_dimensions = dimensions
-    if search_type in ["discover", "googleNews"] and "query" in final_dimensions:
-        final_dimensions = [d for d in final_dimensions if d != "query"]
+    # 3. Request Preparation
+    final_dimensions = [d for d in dimensions if d != "query"] if search_type in ["discover", "googleNews"] else dimensions
 
     body = {
         "startDate": start_date,
         "endDate": end_date,
         "dimensions": final_dimensions,
-        "type": search_type,  # This handles web, image, video, etc.
+        "type": search_type,
         "rowLimit": row_limit
     }
 
-    # 4. GSC API Call
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
-    }
-    
-    encoded_site = quote(record.site_url, safe="")
-    url = GSC_QUERY_URL.format(site_url=encoded_site)
-
-    resp = requests.post(url, headers=headers, json=body)
-
-    if resp.status_code != 200:
-        raise HTTPException(status_code=400, detail=resp.text)
-
-    return resp.json()
-
-
+    # 4. Asynchronous API Call with Connection Pooling
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        encoded_site = quote(record.site_url, safe="")
+        url = GSC_QUERY_URL.format(site_url=encoded_site)
+        
+        try:
+            resp = await client.post(
+                url, 
+                headers={"Authorization": f"Bearer {access_token}"}, 
+                json=body
+            )
+            # Raise for status but catch it to provide the exact Google error message
+            resp.raise_for_status()
+            return resp.json()
+            
+        except httpx.HTTPStatusError as e:
+            # Pass the GSC specific error (like 403 permissions) back to the user
+            raise HTTPException(status_code=e.response.status_code, detail=e.response.json())
+        except httpx.RequestError:
+            raise HTTPException(status_code=503, detail="Search Console API is currently unavailable")
