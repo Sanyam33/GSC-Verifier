@@ -197,7 +197,22 @@ def get_verification_result(
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GSC_QUERY_URL = "https://www.googleapis.com/webmasters/v3/sites/{site_url}/searchAnalytics/query"
 
-def get_access_token(refresh_token: str):
+# def get_access_token(refresh_token: str):
+#     data = {
+#         "client_id": CLIENT_ID,
+#         "client_secret": CLIENT_SECRET,
+#         "refresh_token": refresh_token,
+#         "grant_type": "refresh_token"
+#     }
+
+#     resp = requests.post(GOOGLE_TOKEN_URL, data=data)
+#     if resp.status_code != 200:
+#         raise HTTPException(status_code=400, detail="Failed to refresh access token")
+
+#     return resp.json()["access_token"]
+
+
+async def get_access_token(refresh_token: str):
     data = {
         "client_id": CLIENT_ID,
         "client_secret": CLIENT_SECRET,
@@ -205,13 +220,13 @@ def get_access_token(refresh_token: str):
         "grant_type": "refresh_token"
     }
 
-    resp = requests.post(GOOGLE_TOKEN_URL, data=data)
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(GOOGLE_TOKEN_URL, data=data)
+
     if resp.status_code != 200:
-        raise HTTPException(status_code=400, detail="Failed to refresh access token")
+        raise HTTPException(status_code=502, detail="Google token service failed")
 
     return resp.json()["access_token"]
-
-
 
 
 
