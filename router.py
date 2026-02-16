@@ -484,8 +484,8 @@ async def get_gsc_metrics(
     site_url: str = Query(...),
     start_date: str = Query(..., example="2026-01-01"),
     end_date: str = Query(..., example="2026-02-01"),
-    dimensions: List[str] = Query(["query"]),
-    search_type: str = Query("web"),
+    dimensions: List[str] = Query(["query"], description="e.g. query, page, country, device, date"),
+    search_type: str = Query("web", description="web, image, video, news, discover, googleNews"),
     row_limit: int = Query(50, ge=1, le=25000),
     db: Session = Depends(get_db)
 ):
