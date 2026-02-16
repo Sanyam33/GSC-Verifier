@@ -35,162 +35,341 @@ def normalize_site(url: str) -> str:
     )
 
 
-@gsc_router.post("/request-verification")
+# @gsc_router.post("/request-verification")
+# def request_gsc_verification(
+#     data: GSCVerificationCreate,
+#     db: Session = Depends(get_db)
+# ):
+
+#     # cleanup old unverified
+#     db.execute(text("""
+#     DELETE FROM gsc_verifications
+#     WHERE verified = false
+#     AND created_at < NOW() - INTERVAL '15 minutes'
+#     """))
+#     db.commit()
+
+#     clean_site = normalize_site(str(data.site_url))
+#     # clean_site = str(data.site_url)
+#     # create DB record
+#     record = GSCVerification(
+#         site_url=clean_site,
+#         verified=False
+#     )
+#     db.add(record)
+#     db.commit()
+#     db.refresh(record)
+
+#     # state = record id (safe + simple)
+#     state = str(record.id)
+
+#     params = {
+#         "client_id": CLIENT_ID,
+#         "redirect_uri": REDIRECT_URI,
+#         "response_type": "code",
+#         "scope": SCOPE,
+#         "access_type": "offline",
+#         "prompt": "consent",
+#         "state": state
+#     }
+
+#     auth_url = f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
+
+#     return {"auth_url": auth_url}
+
+
+import logging
+
+# Set up logging to catch DB errors in production
+logger = logging.getLogger(__name__)
+
+@gsc_router.post("/request-verification", status_code=status.HTTP_201_CREATED)
 def request_gsc_verification(
-    data: GSCVerificationCreate,
+    data: GSCVerificationCreate, 
     db: Session = Depends(get_db)
 ):
+    try:
+        db.execute(text("""
+            DELETE FROM gsc_verifications 
+            WHERE verified = false 
+            AND created_at < NOW() - INTERVAL '15 minutes'
+        """))
+        
+        # 2. Normalize and Prepare Record
+        clean_site = normalize_site(str(data.site_url))
+        
+        new_record = GSCVerification(
+            site_url=clean_site,
+            verified=False
+        )
+        
+        db.add(new_record)
+        db.commit()
+        db.refresh(new_record)
 
-    # cleanup old unverified
-    db.execute(text("""
-    DELETE FROM gsc_verifications
-    WHERE verified = false
-    AND created_at < NOW() - INTERVAL '15 minutes'
-    """))
-    db.commit()
+        # 3. Construct OAuth URL
+        state = str(new_record.id)
+        params = {
+            "client_id": CLIENT_ID,
+            "redirect_uri": REDIRECT_URI,
+            "response_type": "code",
+            "scope": SCOPE,
+            "access_type": "offline",
+            "prompt": "consent",
+            "state": state
+        }
+        
+        auth_url = f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
+        return {"auth_url": auth_url, "id": state}
 
-    clean_site = normalize_site(str(data.site_url))
-    # clean_site = str(data.site_url)
-    # create DB record
-    record = GSCVerification(
-        site_url=clean_site,
-        verified=False
-    )
-    db.add(record)
-    db.commit()
-    db.refresh(record)
+    except exc.SQLAlchemyError as e:
+        db.rollback()
+        logger.error(f"Database error during verification request: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to initialize verification. Please try again later."
+        )
 
-    # state = record id (safe + simple)
-    state = str(record.id)
-
-    params = {
-        "client_id": CLIENT_ID,
-        "redirect_uri": REDIRECT_URI,
-        "response_type": "code",
-        "scope": SCOPE,
-        "access_type": "offline",
-        "prompt": "consent",
-        "state": state
-    }
-
-    auth_url = f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
-
-    return {"auth_url": auth_url}
 
 ########################################################
 
+# @gsc_router.get("/callback")
+# def gsc_callback(request: Request, db: Session = Depends(get_db)):
+#     # 1. Handle user denying consent
+#     error = request.query_params.get("error")
+#     if error:
+#         state = request.query_params.get("state")
+#         record = db.query(GSCVerification).filter(GSCVerification.id == state).first()
+#         if record:
+#             record.verified = False
+#             db.commit()
+#         return {"status": "failed", "reason": error}
+
+#     code = request.query_params.get("code")
+#     state = request.query_params.get("state")  # our DB record id
+
+#     if not code or not state:
+#         return {"status": "failed", "reason": "Missing code or state"}
+
+#     # 2. Find DB record
+#     record = db.query(GSCVerification).filter(GSCVerification.id == state).first()
+#     if not record:
+#         return {"status": "failed", "reason": "Invalid state"}
+
+#     # 3. Exchange code for token
+#     token_res = requests.post(
+#         TOKEN_URL,
+#         data={
+#             "client_id": CLIENT_ID,
+#             "client_secret": CLIENT_SECRET,
+#             "code": code,
+#             "grant_type": "authorization_code",
+#             "redirect_uri": REDIRECT_URI,
+#         },
+#         headers={"Content-Type": "application/x-www-form-urlencoded"},
+#     )
+
+#     token_data = token_res.json()
+
+#     if "access_token" not in token_data:
+#         return {"status": "failed", "reason": "Token exchange failed", "data": token_data}
+
+#     access_token = token_data["access_token"]
+#     refresh_token = token_data.get("refresh_token")
+
+#     # 4. Call GSC API
+#     sites_res = requests.get(
+#         GSC_SITES_URL,
+#         headers={"Authorization": f"Bearer {access_token}"}
+#     )
+
+#     sites_data = sites_res.json()
+
+#     if "siteEntry" not in sites_data:
+#         return {"status": "failed", "reason": "No sites found", "data": sites_data}
+
+#     # 5. Check ownership
+#     requested = normalize_site(record.site_url)
+
+#     verified = False
+#     permission_level = None
+
+#     for site in sites_data["siteEntry"]:
+#         google_site = normalize_site(site["siteUrl"])
+#         if google_site == requested:
+#             permission_level = site["permissionLevel"]
+#             if permission_level in ["siteOwner", "siteFullUser"]:
+#                 verified = True
+#                 record.site_url = site["siteUrl"]
+#             break
+
+#     # 6. Update DB
+#     record.verified = verified
+#     record.permission_level = permission_level
+#     record.access_token = access_token
+#     record.refresh_token = refresh_token
+
+#     db.commit()
+
+#     # 7. Redirect back to platform (optional)
+#     return {
+#         "requested_site": record.site_url,
+#         "google_sites": sites_data,
+#         "verified": verified,
+#         "permission_level": permission_level
+#     }
+USER_INFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
+
 @gsc_router.get("/callback")
-def gsc_callback(request: Request, db: Session = Depends(get_db)):
-    # 1. Handle user denying consent
+async def gsc_callback(request: Request, db: Session = Depends(get_db)):
+    # 1. Handle user denying consent or Google errors
     error = request.query_params.get("error")
+    state = request.query_params.get("state")
+    
+    if not state:
+        raise HTTPException(status_code=400, detail="Missing state parameter")
+
+    record = db.query(GSCVerification).filter(GSCVerification.id == state).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Invalid state/session")
+
     if error:
-        state = request.query_params.get("state")
-        record = db.query(GSCVerification).filter(GSCVerification.id == state).first()
-        if record:
-            record.verified = False
-            db.commit()
+        record.verified = False
+        db.commit()
         return {"status": "failed", "reason": error}
 
     code = request.query_params.get("code")
-    state = request.query_params.get("state")  # our DB record id
+    if not code:
+        return {"status": "failed", "reason": "No authorization code provided"}
 
-    if not code or not state:
-        return {"status": "failed", "reason": "Missing code or state"}
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        # 2. Exchange code for tokens
+        token_res = await client.post(
+            TOKEN_URL,
+            data={
+                "client_id": CLIENT_ID,
+                "client_secret": CLIENT_SECRET,
+                "code": code,
+                "grant_type": "authorization_code",
+                "redirect_uri": REDIRECT_URI,
+            }
+        )
+        
+        if token_res.status_code != 200:
+            return {"status": "failed", "reason": "Token exchange failed", "details": token_res.json()}
+        
+        token_data = token_res.json()
+        access_token = token_data["access_token"]
+        refresh_token = token_data.get("refresh_token") # Note: Only sent on first consent
 
-    # 2. Find DB record
-    record = db.query(GSCVerification).filter(GSCVerification.id == state).first()
-    if not record:
-        return {"status": "failed", "reason": "Invalid state"}
+        # 3. Get User Details (to fill your new fields)
+        user_res = await client.get(
+            USER_INFO_URL,
+            headers={"Authorization": f"Bearer {access_token}"}
+        )
+        user_data = user_res.json() if user_res.status_code == 200 else {}
 
-    # 3. Exchange code for token
-    token_res = requests.post(
-        TOKEN_URL,
-        data={
-            "client_id": CLIENT_ID,
-            "client_secret": CLIENT_SECRET,
-            "code": code,
-            "grant_type": "authorization_code",
-            "redirect_uri": REDIRECT_URI,
-        },
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-    )
+        # 4. Get GSC Sites
+        sites_res = await client.get(
+            GSC_SITES_URL,
+            headers={"Authorization": f"Bearer {access_token}"}
+        )
+        sites_data = sites_res.json()
 
-    token_data = token_res.json()
+        if "siteEntry" not in sites_data:
+            return {"status": "failed", "reason": "No sites found in this Google account"}
 
-    if "access_token" not in token_data:
-        return {"status": "failed", "reason": "Token exchange failed", "data": token_data}
+        # 5. Ownership & Data Sync Logic
+        requested_normalized = normalize_site(record.site_url)
+        verified = False
+        permission_level = None
 
-    access_token = token_data["access_token"]
-    refresh_token = token_data.get("refresh_token")
+        for site in sites_data["siteEntry"]:
+            if normalize_site(site["siteUrl"]) == requested_normalized:
+                permission_level = site["permissionLevel"]
+                if permission_level in ["siteOwner", "siteFullUser"]:
+                    verified = True
+                    # IMPORTANT: Save the EXACT URL from Google for the metrics API to work
+                    record.site_url = site["siteUrl"]
+                break
 
-    # 4. Call GSC API
-    sites_res = requests.get(
-        GSC_SITES_URL,
-        headers={"Authorization": f"Bearer {access_token}"}
-    )
+        # 6. Final DB Update (Populating your new fields)
+        record.verified = verified
+        record.permission_level = permission_level
+        record.access_token = access_token
+        
+        # Only update refresh_token if Google sent a new one
+        if refresh_token:
+            record.refresh_token = refresh_token
+            
+        # Filling your new fields
+        record.google_id = user_data.get("sub")    # 'sub' is the unique Google User ID
+        record.email_id = user_data.get("email")   # The user's email address
+        
+        db.commit()
 
-    sites_data = sites_res.json()
-
-    if "siteEntry" not in sites_data:
-        return {"status": "failed", "reason": "No sites found", "data": sites_data}
-
-    # 5. Check ownership
-    requested = normalize_site(record.site_url)
-
-    verified = False
-    permission_level = None
-
-    for site in sites_data["siteEntry"]:
-        google_site = normalize_site(site["siteUrl"])
-        if google_site == requested:
-            permission_level = site["permissionLevel"]
-            if permission_level in ["siteOwner", "siteFullUser"]:
-                verified = True
-                record.site_url = site["siteUrl"]
-            break
-
-    # 6. Update DB
-    record.verified = verified
-    record.permission_level = permission_level
-    record.access_token = access_token
-    record.refresh_token = refresh_token
-
-    db.commit()
-
-    # 7. Redirect back to platform (optional)
     return {
-        "requested_site": record.site_url,
-        "google_sites": sites_data,
-        "verified": verified,
-        "permission_level": permission_level
+        "status": "success" if verified else "unverified",
+        "email": record.email_id,
+        "site": record.site_url,
+        "verified": verified
     }
 
 
 #############################################################
 
-@gsc_router.get("/verify-result", response_model=GSCVerificationResult)
+# @gsc_router.get("/verify-result", response_model=GSCVerificationResult)
+# def get_verification_result(
+#     site_url: str = Query(...),
+#     db: Session = Depends(get_db)
+# ):
+
+#     # clean_site = normalize_site(site_url)
+
+#     record = (
+#         db.query(GSCVerification)
+#         .filter(GSCVerification.site_url == site_url)
+#         .order_by(GSCVerification.created_at.desc())
+#         .first()
+#     )
+
+#     if not record:
+#         raise HTTPException(status_code=404, detail="Verification record not found")
+
+#     return {
+#         "site_url": record.site_url,
+#         "verified": record.verified,
+#         "permission_level": record.permission_level
+#     }
+
 def get_verification_result(
-    site_url: str = Query(...),
+    site_url: str = Query(..., description="The URL to check verification status for"),
     db: Session = Depends(get_db)
 ):
-
     clean_site = normalize_site(site_url)
 
     record = (
         db.query(GSCVerification)
-        .filter(GSCVerification.site_url == clean_site)
+        .filter(
+            (GSCVerification.site_url == site_url) | 
+            (GSCVerification.site_url == clean_site)
+        )
         .order_by(GSCVerification.created_at.desc())
         .first()
     )
 
     if not record:
-        raise HTTPException(status_code=404, detail="Verification record not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail=f"No verification history found for {site_url}"
+        )
 
     return {
         "site_url": record.site_url,
         "verified": record.verified,
         "permission_level": record.permission_level
     }
+
 
 ####################################################
 
