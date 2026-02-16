@@ -489,6 +489,9 @@ async def get_gsc_metrics(
     row_limit: int = Query(50, ge=1, le=25000),
     db: Session = Depends(get_db)
 ):
+
+    if start_date > end_date:
+        raise HTTPException(status_code=400, detail="start_date must be before end_date")
     # 1. Database Lookup (Remains synchronous as SQLAlchemy/Postgres drivers usually are)
     record = db.query(GSCVerification).filter(
         GSCVerification.site_url == site_url,
@@ -519,18 +522,19 @@ async def get_gsc_metrics(
         "rowLimit": row_limit
     }
 
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+
     # 4. Asynchronous API Call with Connection Pooling
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
         encoded_site = quote(record.site_url, safe="")
         url = GSC_QUERY_URL.format(site_url=encoded_site)
         
         try:
-            resp = await client.post(
-                url, 
-                headers={"Authorization": f"Bearer {access_token}"}, 
-                json=body
-            )
-            # Raise for status but catch it to provide the exact Google error message
+            resp = await client.post(url, headers=headers, json=body)
+
             resp.raise_for_status()
             return resp.json()
             
@@ -539,3 +543,74 @@ async def get_gsc_metrics(
             raise HTTPException(status_code=e.response.status_code, detail=e.response.json())
         except httpx.RequestError:
             raise HTTPException(status_code=503, detail="Search Console API is currently unavailable")
+
+        
+        
+        
+        # if resp.status_code != 200:
+        # try:
+        #     google_error = resp.json()
+        # except:
+        #     google_error = resp.text
+
+        # raise HTTPException(
+        #     status_code=502,
+        #     detail={
+        #         "source": "google_search_console",
+        #         "message": "Failed to fetch metrics",
+        #         "google_error": google_error
+        #     }
+        # )
+
+
+# # Constant for revoking tokens
+# GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
+
+# @gsc_router.delete("/disconnect", status_code=status.HTTP_200_OK)
+# async def disconnect_gsc_site(
+#     site_url: str = Query(...),
+#     db: Session = Depends(get_db)
+# ):
+
+#     # 1. Find the record
+#     record = db.query(GSCVerification).filter(
+#         GSCVerification.site_url == site_url,
+#         GSCVerification.verified == True
+#     ).first()
+
+#     if not record:
+#         # If it doesn't exist, we consider the job "done" (Idempotent)
+#         return {"message": "Site was not connected or already removed."}
+
+#     # 2. Attempt to Revoke Token (Best Effort)
+#     # We use the refresh_token if available as it's more powerful
+#     token_to_revoke = record.refresh_token or record.access_token
+    
+#     if token_to_revoke:
+#         async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+#             try:
+#                 # Google expects the token as a query parameter or form data
+#                 await client.post(
+#                     f"{GOOGLE_REVOKE_URL}?token={token_to_revoke}",
+#                     headers={"Content-Type": "application/x-www-form-urlencoded"}
+#                 )
+#             except Exception as e:
+#                 # We log this but don't stop the deletion. 
+#                 # User might have already revoked access manually.
+#                 print(f"Token revocation failed (already revoked?): {e}")
+
+#     # 3. Delete from Database
+#     try:
+#         db.delete(record)
+#         db.commit()
+#     except Exception as e:
+#         db.rollback()
+#         raise HTTPException(
+#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+#             detail="Database error during disconnection."
+#         )
+
+#     return {
+#         "status": "success",
+#         "message": f"Successfully disconnected {site_url} and revoked access tokens."
+#     }
