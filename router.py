@@ -211,34 +211,7 @@ GSC_QUERY_URL = "https://www.googleapis.com/webmasters/v3/sites/{site_url}/searc
 
 #     return resp.json()["access_token"]
 
-# async def get_access_token(refresh_token: str):
-#     data = {
-#         "client_id": CLIENT_ID,
-#         "client_secret": CLIENT_SECRET,
-#         "refresh_token": refresh_token,
-#         "grant_type": "refresh_token"
-#     }
-
-#     async with httpx.AsyncClient(timeout=10) as client:
-#         resp = await client.post(GOOGLE_TOKEN_URL, data=data)
-
-#     if resp.status_code != 200:
-#         raise HTTPException(status_code=502, detail="Google token service failed")
-
-#     return resp.json()["access_token"]
-
-import httpx
-from time import time
-from fastapi import HTTPException
-
-TOKEN_CACHE = {}  # refresh_token -> (access_token, expiry)
-
 async def get_access_token(refresh_token: str):
-    if refresh_token in TOKEN_CACHE:
-        token, expiry = TOKEN_CACHE[refresh_token]
-        if expiry > time():
-            return token
-
     data = {
         "client_id": CLIENT_ID,
         "client_secret": CLIENT_SECRET,
@@ -252,13 +225,39 @@ async def get_access_token(refresh_token: str):
     if resp.status_code != 200:
         raise HTTPException(status_code=502, detail="Google token service failed")
 
-    payload = resp.json()
-    access_token = payload["access_token"]
-    expires_in = payload.get("expires_in", 3600)
+    return resp.json()["access_token"]
 
-    TOKEN_CACHE[refresh_token] = (access_token, time() + expires_in - 60)
 
-    return access_token
+# from time import time
+
+# TOKEN_CACHE = {}  # refresh_token -> (access_token, expiry)
+
+# async def get_access_token(refresh_token: str):
+#     if refresh_token in TOKEN_CACHE:
+#         token, expiry = TOKEN_CACHE[refresh_token]
+#         if expiry > time():
+#             return token
+
+#     data = {
+#         "client_id": CLIENT_ID,
+#         "client_secret": CLIENT_SECRET,
+#         "refresh_token": refresh_token,
+#         "grant_type": "refresh_token"
+#     }
+
+#     async with httpx.AsyncClient(timeout=10) as client:
+#         resp = await client.post(GOOGLE_TOKEN_URL, data=data)
+
+#     if resp.status_code != 200:
+#         raise HTTPException(status_code=502, detail="Google token service failed")
+
+#     payload = resp.json()
+#     access_token = payload["access_token"]
+#     expires_in = payload.get("expires_in", 3600)
+
+#     TOKEN_CACHE[refresh_token] = (access_token, time() + expires_in - 60)
+
+#     return access_token
 
 
 
