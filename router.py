@@ -407,7 +407,7 @@ async def get_gsc_metrics(
         record = db.query(GSCVerification).filter(
             GSCVerification.site_url == clean,
             GSCVerification.verified == True
-        ).first()
+        ).order_by(GSCVerification.created_at.desc()).first()
 
     if not record:
         raise HTTPException(status_code=404, detail="Verified site not found")
