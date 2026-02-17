@@ -563,54 +563,52 @@ async def get_gsc_metrics(
         # )
 
 
-# # Constant for revoking tokens
-# GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
+################Constant for revoking tokens############################
 
-# @gsc_router.delete("/disconnect", status_code=status.HTTP_200_OK)
-# async def disconnect_gsc_site(
-#     site_url: str = Query(...),
-#     db: Session = Depends(get_db)
-# ):
+GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 
-#     # 1. Find the record
-#     record = db.query(GSCVerification).filter(
-#         GSCVerification.site_url == site_url,
-#         GSCVerification.verified == True
-#     ).first()
+@gsc_router.delete("/disconnect", status_code=status.HTTP_200_OK)
+async def disconnect_gsc_site(
+    site_url: str = Query(...),
+    db: Session = Depends(get_db)
+):
 
-#     if not record:
-#         # If it doesn't exist, we consider the job "done" (Idempotent)
-#         return {"message": "Site was not connected or already removed."}
+    record = db.query(GSCVerification).filter(
+        GSCVerification.site_url == site_url,
+        GSCVerification.verified == True
+    ).first()
 
-#     # 2. Attempt to Revoke Token (Best Effort)
-#     # We use the refresh_token if available as it's more powerful
-#     token_to_revoke = record.refresh_token or record.access_token
+    if not record:
+        return {"message": "Site was not connected or already removed."}
+
     
-#     if token_to_revoke:
-#         async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-#             try:
-#                 # Google expects the token as a query parameter or form data
-#                 await client.post(
-#                     f"{GOOGLE_REVOKE_URL}?token={token_to_revoke}",
-#                     headers={"Content-Type": "application/x-www-form-urlencoded"}
-#                 )
-#             except Exception as e:
-#                 # We log this but don't stop the deletion. 
-#                 # User might have already revoked access manually.
-#                 print(f"Token revocation failed (already revoked?): {e}")
+    token_to_revoke = record.refresh_token or record.access_token
+    
+    if token_to_revoke:
+        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+            try:
+                # Google expects the token as a query parameter or form data
+                await client.post(
+                    f"{GOOGLE_REVOKE_URL}?token={token_to_revoke}",
+                    headers={"Content-Type": "application/x-www-form-urlencoded"}
+                )
+            except Exception as e:
+                # We log this but don't stop the deletion. 
+                # User might have already revoked access manually.
+                print(f"Token revocation failed (already revoked?): {e}")
 
-#     # 3. Delete from Database
-#     try:
-#         db.delete(record)
-#         db.commit()
-#     except Exception as e:
-#         db.rollback()
-#         raise HTTPException(
-#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-#             detail="Database error during disconnection."
-#         )
+    # 3. Delete from Database
+    try:
+        db.delete(record)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database error during disconnection."
+        )
 
-#     return {
-#         "status": "success",
-#         "message": f"Successfully disconnected {site_url} and revoked access tokens."
-#     }
+    return {
+        "status": "success",
+        "message": f"Successfully disconnected {site_url} and revoked access tokens."
+    }
